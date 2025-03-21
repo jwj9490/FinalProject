@@ -1,0 +1,774 @@
+-- 데이터베이스 생성 (Oracle에서는 사용자 생성으로 대체)
+-- CREATE USER hotel_service IDENTIFIED BY password;
+-- GRANT CONNECT, RESOURCE TO hotel_service;
+-- CONN hotel_service/password
+
+1. USERS 테이블 (독립 테이블)
+/*
+* USERS 테이블
+* 기능: 호텔 서비스를 이용하는 사용자(고객) 정보를 저장
+* 주요 기능: 회원가입, 로그인, 회원정보 수정, 멤버십 관리
+*/
+DROP TRIGGER users_bir;
+DROP SEQUENCE users_seq;
+DROP TABLE USERS CASCADE CONSTRAINTS;
+
+CREATE TABLE USERS (
+ user_id NUMBER PRIMARY KEY,
+ username VARCHAR2(50) NOT NULL UNIQUE,
+ password VARCHAR2(255) NOT NULL,
+ name VARCHAR2(100) NOT NULL,
+ email VARCHAR2(100) NOT NULL UNIQUE,
+ phone VARCHAR2(20),
+ is_membership NUMBER(1) DEFAULT 0,
+ created_at DATE DEFAULT SYSDATE
+);
+
+-- 사용자 ID 시퀀스 생성
+CREATE SEQUENCE users_seq START WITH 1 INCREMENT BY 1;
+
+-- 사용자 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER users_bir 
+BEFORE INSERT ON USERS 
+FOR EACH ROW
+BEGIN
+  SELECT users_seq.NEXTVAL 
+  INTO :NEW.user_id 
+  FROM dual;
+END;
+/
+
+
+
+
+
+
+
+2. ADMIN 테이블 (독립 테이블)
+/*
+* ADMIN 테이블
+* 기능: 호텔 서비스를 관리하는 관리자 정보를 저장
+* 주요 기능: 관리자 로그인, 권한 관리, 시스템 관리
+*/
+DROP TRIGGER admin_bir;
+DROP TRIGGER admin_super_limit;
+DROP SEQUENCE admin_seq;
+DROP TABLE ADMIN CASCADE CONSTRAINTS;
+
+CREATE TABLE ADMIN (
+ admin_id NUMBER PRIMARY KEY,
+ username VARCHAR2(50) NOT NULL UNIQUE,
+ password VARCHAR2(255) NOT NULL,
+ email VARCHAR2(100) NOT NULL UNIQUE,
+ permissionLevel VARCHAR2(50) NOT NULL CHECK (permissionLevel IN ('manager', 'super')) -- CHECK 제약 조건 추가
+);
+
+-- 관리자 ID 시퀀스 생성
+CREATE SEQUENCE admin_seq START WITH 1 INCREMENT BY 1;
+
+-- 관리자 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER admin_bir 
+BEFORE INSERT ON ADMIN 
+FOR EACH ROW
+BEGIN
+  SELECT admin_seq.NEXTVAL 
+  INTO :NEW.admin_id 
+  FROM dual;
+END;
+/
+
+-- 'super' 관리자는 오직 한 명만 존재하도록 제한하는 트리거
+CREATE OR REPLACE TRIGGER admin_super_limit
+BEFORE INSERT OR UPDATE ON ADMIN
+FOR EACH ROW
+WHEN (NEW.permissionLevel = 'super')
+DECLARE
+  super_count NUMBER;
+BEGIN
+  -- 현재 'super' 권한을 가진 관리자가 몇 명인지 확인
+  SELECT COUNT(*) INTO super_count FROM ADMIN WHERE permissionLevel = 'super';
+
+  -- 'super'가 이미 존재하면 에러 발생
+  IF super_count > 0 THEN
+    RAISE_APPLICATION_ERROR(-20001, 'Only one super admin is allowed.');
+  END IF;
+END;
+/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+3. VIEW_PREMIUM 테이블 (독립 테이블)
+/*
+* VIEW_PREMIUM 테이블
+* 기능: 객실 뷰 유형별 추가 요금 정보를 저장
+* 주요 기능: 뷰 유형에 따른 추가 요금 관리
+*/
+DROP TRIGGER view_premium_bir;
+DROP SEQUENCE view_premium_seq;
+DROP TABLE VIEW_PREMIUM CASCADE CONSTRAINTS;
+
+CREATE TABLE VIEW_PREMIUM (
+  premium_id NUMBER PRIMARY KEY,
+  view_type VARCHAR2(50) NOT NULL UNIQUE,
+  premium_amount NUMBER(10, 2) NOT NULL,
+  description CLOB,
+  is_active NUMBER(1) DEFAULT 1
+);
+
+-- 뷰 프리미엄 ID 시퀀스 생성
+CREATE SEQUENCE view_premium_seq START WITH 1 INCREMENT BY 1;
+
+-- 뷰 프리미엄 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER view_premium_bir 
+BEFORE INSERT ON VIEW_PREMIUM 
+FOR EACH ROW
+BEGIN
+  SELECT view_premium_seq.NEXTVAL 
+  INTO :NEW.premium_id 
+  FROM dual;
+END;
+/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+4. ROOM_TYPES 테이블 (독립 테이블)
+/*
+* ROOM_TYPES 테이블
+* 기능: 호텔 내 객실 유형 정보를 저장
+* 주요 기능: 객실 유형 목록 조회, 객실 유형별 가격 및 정보 제공
+* 설명: 같은 유형의 객실이 여러 개 있을 수 있음 (예: 디럭스 더블 10개)
+*/
+DROP TRIGGER room_types_bir;
+DROP SEQUENCE room_types_seq;
+DROP TABLE ROOM_TYPES CASCADE CONSTRAINTS;
+
+CREATE TABLE ROOM_TYPES (
+  room_type_id NUMBER PRIMARY KEY,
+  name VARCHAR2(100) NOT NULL,
+  description CLOB,
+  capacity NUMBER DEFAULT 1 NOT NULL,  -- 수정된 부분: DEFAULT가 NOT NULL 앞으로 
+  price NUMBER(10, 2) NOT NULL,
+ size_sqm NUMBER,  -- 컬럼명 변경 (size → size_sqm)
+  bed_type VARCHAR2(50),
+  amenities CLOB,
+  images CLOB
+);
+
+
+
+-- 객실 유형 ID 시퀀스 생성
+CREATE SEQUENCE room_types_seq START WITH 1 INCREMENT BY 1;
+
+-- 객실 유형 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER room_types_bir 
+BEFORE INSERT ON ROOM_TYPES 
+FOR EACH ROW
+BEGIN
+  SELECT room_types_seq.NEXTVAL 
+  INTO :NEW.room_type_id 
+  FROM dual;
+END;
+/
+
+
+
+
+
+
+
+
+
+5. RESTAURANTS 테이블 (독립 테이블)
+/*
+* RESTAURANTS 테이블
+* 기능: 호텔 내 레스토랑 정보를 저장
+* 주요 기능: 레스토랑 목록 조회, 레스토랑 상세 정보 제공
+*/
+DROP TRIGGER restaurants_bir;
+DROP SEQUENCE restaurants_seq;
+DROP TABLE RESTAURANTS CASCADE CONSTRAINTS;
+
+CREATE TABLE RESTAURANTS (
+ restaurant_id NUMBER PRIMARY KEY,
+ name VARCHAR2(100) NOT NULL,
+ description CLOB,
+ cuisine_type VARCHAR2(50),
+ opening_hours VARCHAR2(100),
+ location VARCHAR2(100),
+ capacity NUMBER,
+ is_reservation_required NUMBER(1) DEFAULT 0,
+ contact_info VARCHAR2(100),
+ images CLOB
+);
+
+-- 레스토랑 ID 시퀀스 생성
+CREATE SEQUENCE restaurants_seq START WITH 1 INCREMENT BY 1;
+
+-- 레스토랑 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER restaurants_bir 
+BEFORE INSERT ON RESTAURANTS 
+FOR EACH ROW
+BEGIN
+  SELECT restaurants_seq.NEXTVAL 
+  INTO :NEW.restaurant_id 
+  FROM dual;
+END;
+/
+
+
+
+
+
+
+
+
+
+
+
+6. ROOMS 테이블 (ROOM_TYPES, VIEW_PREMIUM 참조)
+/*
+* RESERVATIONS 테이블
+/*
+* ROOMS 테이블
+* 기능: 실제 객실 정보를 저장
+* 주요 기능: 객실 예약 가능 여부 확인, 객실 상태 관리
+* 설명: 각 객실은 특정 객실 유형에 속함 (예: 101호는 디럭스 더블 유형)
+* 객실 선점 기능: 멤버십 회원은 예약 시 특정 객실 번호를 직접 선택하여 선점할 수 있음
+*/
+DROP TRIGGER rooms_bir;
+DROP SEQUENCE rooms_seq;
+DROP TABLE ROOMS CASCADE CONSTRAINTS;
+
+CREATE TABLE ROOMS (
+ room_id NUMBER PRIMARY KEY,
+ room_type_id NUMBER NOT NULL,
+ room_number VARCHAR2(20) NOT NULL UNIQUE,
+ floor NUMBER NOT NULL,
+ view_type VARCHAR2(50),
+ is_available NUMBER(1) DEFAULT 1,
+ status VARCHAR2(50) DEFAULT 'clean',
+ CONSTRAINT fk_room_type FOREIGN KEY (room_type_id) REFERENCES ROOM_TYPES(room_type_id) ON DELETE CASCADE,
+ CONSTRAINT fk_room_view_type FOREIGN KEY (view_type) REFERENCES VIEW_PREMIUM(view_type) ON DELETE SET NULL
+);
+
+-- 객실 ID 시퀀스 생성
+CREATE SEQUENCE rooms_seq START WITH 1 INCREMENT BY 1;
+
+-- 객실 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER rooms_bir 
+BEFORE INSERT ON ROOMS 
+FOR EACH ROW
+BEGIN
+  SELECT rooms_seq.NEXTVAL 
+  INTO :NEW.room_id 
+  FROM dual;
+END;
+/
+
+
+
+
+
+
+7. MENUS 테이블 (RESTAURANTS 참조)
+/*
+* MENUS 테이블
+* 기능: 레스토랑 메뉴 정보를 저장
+* 주요 기능: 메뉴 목록 조회, 메뉴 상세 정보 제공
+*/
+DROP TRIGGER menus_bir;
+DROP SEQUENCE menus_seq;
+DROP TABLE MENUS CASCADE CONSTRAINTS;
+
+CREATE TABLE MENUS (
+ menu_id NUMBER PRIMARY KEY,
+ restaurant_id NUMBER NOT NULL,
+ name VARCHAR2(100) NOT NULL,
+ description CLOB,
+ price NUMBER(10, 2) NOT NULL,
+ category VARCHAR2(50),
+ is_signature NUMBER(1) DEFAULT 0,
+ is_available NUMBER(1) DEFAULT 1,
+ allergens CLOB,
+ image VARCHAR2(255),
+ CONSTRAINT fk_menu_restaurant FOREIGN KEY (restaurant_id) REFERENCES RESTAURANTS(restaurant_id) ON DELETE CASCADE
+);
+
+-- 메뉴 ID 시퀀스 생성
+CREATE SEQUENCE menus_seq START WITH 1 INCREMENT BY 1;
+
+-- 메뉴 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER menus_bir 
+BEFORE INSERT ON MENUS 
+FOR EACH ROW
+BEGIN
+  SELECT menus_seq.NEXTVAL 
+  INTO :NEW.menu_id 
+  FROM dual;
+END;
+/
+
+
+
+
+
+
+
+
+
+8. BOARD_POSTS 테이블 (ADMIN 참조)
+/*
+* BOARD_POSTS 테이블
+* 기능: 공지사항, 이벤트, FAQ 등의 게시글을 저장
+* 주요 기능: 게시글 작성, 게시글 조회, 게시글 관리
+*/
+DROP TRIGGER board_posts_bir;
+DROP SEQUENCE board_posts_seq;
+DROP TABLE BOARD_POSTS CASCADE CONSTRAINTS;
+
+CREATE TABLE BOARD_POSTS (
+  post_id NUMBER PRIMARY KEY,
+  admin_id NUMBER NOT NULL,
+  title VARCHAR2(200) NOT NULL,
+  content CLOB NOT NULL,
+  type VARCHAR2(10) DEFAULT 'notice' NOT NULL,
+  CONSTRAINT board_post_type_check CHECK (type IN ('notice', 'event')), 
+  category VARCHAR2(50),
+  start_date DATE DEFAULT SYSDATE,
+  end_date DATE,
+  is_active NUMBER(1) DEFAULT 1,
+  created_at DATE DEFAULT SYSDATE,
+  CONSTRAINT fk_board_post_admin FOREIGN KEY (admin_id) REFERENCES ADMIN(admin_id) ON DELETE CASCADE
+);
+
+
+
+-- 게시글 ID 시퀀스 생성
+CREATE SEQUENCE board_posts_seq START WITH 1 INCREMENT BY 1;
+
+-- 게시글 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER board_posts_bir 
+BEFORE INSERT ON BOARD_POSTS 
+FOR EACH ROW
+BEGIN
+  SELECT board_posts_seq.NEXTVAL 
+  INTO :NEW.post_id 
+  FROM dual;
+END;
+/
+
+
+
+
+
+
+9. PAYMENT_METHODS 테이블 (USERS 참조)
+
+/*
+* PAYMENT_METHODS 테이블
+* 기능: 사용자의 결제 수단 정보를 저장
+* 주요 기능: 결제 수단 등록, 결제 수단 관리
+*/
+DROP TRIGGER payment_methods_bir;
+DROP SEQUENCE payment_methods_seq;
+DROP TABLE PAYMENT_METHODS CASCADE CONSTRAINTS;
+
+CREATE TABLE PAYMENT_METHODS (
+ payment_id NUMBER PRIMARY KEY,
+ user_id NUMBER NOT NULL,
+ card_type VARCHAR2(50) NOT NULL,
+ card_number VARCHAR2(255) NOT NULL,
+ expiry_date VARCHAR2(10) NOT NULL,
+ is_default NUMBER(1) DEFAULT 0,
+ CONSTRAINT fk_payment_user FOREIGN KEY (user_id) REFERENCES USERS(user_id) ON DELETE CASCADE
+);
+
+-- 결제수단 ID 시퀀스 생성
+CREATE SEQUENCE payment_methods_seq START WITH 1 INCREMENT BY 1;
+
+-- 결제수단 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER payment_methods_bir 
+BEFORE INSERT ON PAYMENT_METHODS 
+FOR EACH ROW
+BEGIN
+  SELECT payment_methods_seq.NEXTVAL 
+  INTO :NEW.payment_id 
+  FROM dual;
+END;
+/
+
+
+
+
+
+
+
+
+
+
+
+
+10. RESERVATIONS 테이블 (USERS, ROOMS 참조)
+/*
+* RESERVATIONS 테이블
+* 기능: 객실 예약 정보를 저장
+* 주요 기능: 예약 생성, 예약 조회, 예약 변경/취소, 체크인/체크아웃 관리
+* 객실 선점 기능: 멤버십 회원은 특정 객실(room_id)을 직접 선택하여 예약 가능
+*               일반 회원은 객실 유형만 선택 가능하며 체크인 시 객실 배정
+*/
+DROP TRIGGER reservations_bir;
+DROP SEQUENCE reservations_seq;   
+DROP TABLE RESERVATIONS CASCADE CONSTRAINTS;
+
+CREATE TABLE RESERVATIONS (
+  reservation_id NUMBER PRIMARY KEY,
+  user_id NUMBER NOT NULL,
+  room_id NUMBER NOT NULL,
+  check_in_date DATE NOT NULL,
+  check_out_date DATE NOT NULL,
+  guest_count NUMBER DEFAULT 1 NOT NULL,  -- 수정된 부분: DEFAULT가 NOT NULL 
+  special_requests CLOB,
+  status VARCHAR2(20) DEFAULT 'pending' NOT NULL,  -- 수정된 부분: DEFAULT가 NOT 
+  CONSTRAINT reservation_status_check CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed')),
+  base_price NUMBER(10, 2) NOT NULL,
+  view_premium NUMBER(10, 2) DEFAULT 0.00,
+  total_price NUMBER(10, 2) NOT NULL,
+  is_auto_checkin NUMBER(1) DEFAULT 0,
+  created_at DATE DEFAULT SYSDATE,
+  CONSTRAINT fk_reservation_user FOREIGN KEY (user_id) REFERENCES USERS(user_id) ON DELETE CASCADE,
+  CONSTRAINT fk_reservation_room FOREIGN KEY (room_id) REFERENCES ROOMS(room_id) ON DELETE CASCADE
+);
+
+-- 예약 ID 시퀀스 생성
+CREATE SEQUENCE reservations_seq START WITH 1 INCREMENT BY 1;
+
+-- 예약 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER reservations_bir 
+BEFORE INSERT ON RESERVATIONS 
+FOR EACH ROW
+BEGIN
+  SELECT reservations_seq.NEXTVAL 
+  INTO :NEW.reservation_id 
+  FROM dual;
+END;
+/
+11. REVIEWS 테이블 (USERS, ROOM_TYPES 참조)
+
+/*
+* REVIEWS 테이블
+* 기능: 객실에 대한 사용자 리뷰를 저장
+* 주요 기능: 리뷰 작성, 리뷰 조회, 평점 계산
+*/
+DROP TRIGGER reviews_bir;
+DROP SEQUENCE reviews_seq;
+DROP TABLE REVIEWS CASCADE CONSTRAINTS;
+
+CREATE TABLE REVIEWS (
+ review_id NUMBER PRIMARY KEY,
+ user_id NUMBER NOT NULL,
+ room_type_id NUMBER NOT NULL,
+ rating NUMBER NOT NULL,
+ CONSTRAINT rating_check CHECK (rating BETWEEN 1 AND 5),
+ content CLOB,
+ created_at DATE DEFAULT SYSDATE,
+ CONSTRAINT fk_review_user FOREIGN KEY (user_id) REFERENCES USERS(user_id) ON DELETE CASCADE,
+ CONSTRAINT fk_review_room_type FOREIGN KEY (room_type_id) REFERENCES ROOM_TYPES(room_type_id) ON DELETE CASCADE
+);
+
+-- 리뷰 ID 시퀀스 생성
+CREATE SEQUENCE reviews_seq START WITH 1 INCREMENT BY 1;
+
+-- 리뷰 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER reviews_bir 
+BEFORE INSERT ON REVIEWS 
+FOR EACH ROW
+BEGIN
+  SELECT reviews_seq.NEXTVAL 
+  INTO :NEW.review_id 
+  FROM dual;
+END;
+/
+
+
+
+
+
+
+
+
+
+12. FAVORITES 테이블 (USERS, ROOM_TYPES 참조)
+/*
+* FAVORITES 테이블
+* 기능: 사용자가 찜한 객실 유형 정보를 저장
+* 주요 기능: 객실 유형 찜하기, 찜 목록 조회
+*/
+DROP TRIGGER favorites_bir;
+DROP SEQUENCE favorites_seq;
+DROP TABLE FAVORITES CASCADE CONSTRAINTS;
+
+CREATE TABLE FAVORITES (
+ favorite_id NUMBER PRIMARY KEY,
+ user_id NUMBER NOT NULL,
+ room_type_id NUMBER NOT NULL,
+ CONSTRAINT fk_favorite_user FOREIGN KEY (user_id) REFERENCES USERS(user_id) ON DELETE CASCADE,
+ CONSTRAINT fk_favorite_room_type FOREIGN KEY (room_type_id) REFERENCES ROOM_TYPES(room_type_id) ON DELETE CASCADE,
+ CONSTRAINT unique_favorite UNIQUE (user_id, room_type_id)
+);
+
+-- 찜 ID 시퀀스 생성
+CREATE SEQUENCE favorites_seq START WITH 1 INCREMENT BY 1;
+
+-- 찜 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER favorites_bir 
+BEFORE INSERT ON FAVORITES 
+FOR EACH ROW
+BEGIN
+  SELECT favorites_seq.NEXTVAL 
+  INTO :NEW.favorite_id 
+  FROM dual;
+END;
+/
+
+
+
+
+
+
+
+
+
+
+
+13. DINING_RESERVATIONS 테이블 (USERS, RESTAURANTS 참조)
+/*
+* DINING_RESERVATIONS 테이블
+* 기능: 레스토랑 예약 정보를 저장
+* 주요 기능: 다이닝 예약 생성, 예약 조회, 예약 변경/취소
+*/
+DROP TRIGGER dining_reservations_bir;
+DROP SEQUENCE dining_reservations_seq;
+DROP TABLE DINING_RESERVATIONS CASCADE CONSTRAINTS;
+
+CREATE TABLE DINING_RESERVATIONS (
+  dining_reservation_id NUMBER PRIMARY KEY,
+  user_id NUMBER NOT NULL,
+  restaurant_id NUMBER NOT NULL,
+  reservation_date DATE NOT NULL,
+  guest_count NUMBER DEFAULT 1 NOT NULL,  -- 수정된 부분: DEFAULT가 NOT NULL 앞으로
+  special_requests CLOB,
+  status VARCHAR2(20) DEFAULT 'pending' NOT NULL,  -- 수정된 부분: DEFAULT가 NOT NULL 앞으로
+  CONSTRAINT dining_reservation_status_check CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed')),
+  created_at DATE DEFAULT SYSDATE,
+  CONSTRAINT fk_dining_reservation_user FOREIGN KEY (user_id) REFERENCES USERS(user_id) ON DELETE CASCADE,
+  CONSTRAINT fk_dining_reservation_restaurant FOREIGN KEY (restaurant_id) REFERENCES RESTAURANTS(restaurant_id) ON DELETE CASCADE
+);
+
+
+-- 다이닝 예약 ID 시퀀스 생성
+CREATE SEQUENCE dining_reservations_seq START WITH 1 INCREMENT BY 1;
+
+-- 다이닝 예약 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER dining_reservations_bir 
+BEFORE INSERT ON DINING_RESERVATIONS 
+FOR EACH ROW
+BEGIN
+  SELECT dining_reservations_seq.NEXTVAL 
+  INTO :NEW.dining_reservation_id 
+  FROM dual;
+END;
+/
+
+
+
+
+14. DINING_REVIEWS 테이블 (USERS, RESTAURANTS 참조)
+/*
+* DINING_REVIEWS 테이블
+* 기능: 레스토랑에 대한 사용자 리뷰를 저장
+* 주요 기능: 다이닝 리뷰 작성, 리뷰 조회, 평점 계산
+*/
+DROP TRIGGER dining_reviews_bir;
+DROP SEQUENCE dining_reviews_seq;
+DROP TABLE DINING_REVIEWS CASCADE CONSTRAINTS;
+
+CREATE TABLE DINING_REVIEWS (
+ dining_review_id NUMBER PRIMARY KEY,
+ user_id NUMBER NOT NULL,
+ restaurant_id NUMBER NOT NULL,
+ rating NUMBER NOT NULL,
+ CONSTRAINT dining_rating_check CHECK (rating BETWEEN 1 AND 5),
+ content CLOB,
+ visit_date DATE,
+ created_at DATE DEFAULT SYSDATE,
+ CONSTRAINT fk_dining_review_user FOREIGN KEY (user_id) REFERENCES USERS(user_id) ON DELETE CASCADE,
+ CONSTRAINT fk_dining_review_restaurant FOREIGN KEY (restaurant_id) REFERENCES RESTAURANTS(restaurant_id) ON DELETE CASCADE
+);
+
+-- 다이닝 리뷰 ID 시퀀스 생성
+CREATE SEQUENCE dining_reviews_seq START WITH 1 INCREMENT BY 1;
+
+-- 다이닝 리뷰 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER dining_reviews_bir 
+BEFORE INSERT ON DINING_REVIEWS 
+FOR EACH ROW
+BEGIN
+  SELECT dining_reviews_seq.NEXTVAL 
+  INTO :NEW.dining_review_id 
+  FROM dual;
+END;
+/
+
+
+
+
+
+
+
+
+15. INQUIRIES 테이블 (USERS, ADMIN 참조)
+/*
+* INQUIRIES 테이블
+* 기능: 사용자 문의사항과 그에 대한 답변을 저장
+* 주요 기능: 문의 작성, 문의 조회, 문의 답변
+*/
+DROP TRIGGER inquiries_bir;
+DROP SEQUENCE inquiries_seq;
+DROP TABLE INQUIRIES CASCADE CONSTRAINTS;
+
+CREATE TABLE INQUIRIES (
+  inquiry_id NUMBER PRIMARY KEY,
+  user_id NUMBER NOT NULL,
+  admin_id NUMBER,
+  title VARCHAR2(200) NOT NULL,
+  content CLOB NOT NULL,
+  category VARCHAR2(50),
+  response CLOB,
+  status VARCHAR2(20) DEFAULT 'pending' NOT NULL,  -- 수정된 부분: DEFAULT가 NOT NULL 앞으로
+  CONSTRAINT inquiry_status_check CHECK (status IN ('pending', 'in_progress', 'completed')),
+  created_at DATE DEFAULT SYSDATE,
+  responded_at DATE,
+  CONSTRAINT fk_inquiry_user FOREIGN KEY (user_id) REFERENCES USERS(user_id) ON DELETE CASCADE,
+  CONSTRAINT fk_inquiry_admin FOREIGN KEY (admin_id) REFERENCES ADMIN(admin_id) ON DELETE SET NULL
+);
+
+
+-- 문의 ID 시퀀스 생성
+CREATE SEQUENCE inquiries_seq START WITH 1 INCREMENT BY 1;
+
+-- 문의 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER inquiries_bir 
+BEFORE INSERT ON INQUIRIES 
+FOR EACH ROW
+BEGIN
+  SELECT inquiries_seq.NEXTVAL 
+  INTO :NEW.inquiry_id 
+  FROM dual;
+END;
+/
+
+
+
+16. CONTENT_COMMENTS 테이블 (USERS, ADMIN, 다양한 콘텐츠 테이블 참조)
+-- 댓글 테이블 생성
+DROP TRIGGER content_comments_bir;
+DROP SEQUENCE comments_seq;
+DROP TABLE COMMENTS CASCADE CONSTRAINTS;
+
+
+CREATE TABLE COMMENTS (
+  comment_id NUMBER PRIMARY KEY,
+  target_type VARCHAR2(20) NOT NULL,  -- 'review', 'dining_review', 'inquiry' 중 하나
+  target_id NUMBER NOT NULL,          -- 대상 테이블의 ID (review_id, dining_review_id, inquiry_id)
+  user_id NUMBER,                     -- 사용자 댓글
+  admin_id NUMBER,                    -- 관리자 댓글
+  parent_id NUMBER,                   -- 대댓글을 위한 부모 댓글 ID (NULL이면 최상위 댓글)
+  content CLOB NOT NULL,              -- 댓글 내용
+  created_at DATE DEFAULT SYSDATE,    -- 작성일
+  is_deleted NUMBER(1) DEFAULT 0,     -- 삭제 여부
+  CONSTRAINT fk_comment_user FOREIGN KEY (user_id) REFERENCES USERS(user_id) ON DELETE SET NULL,
+  CONSTRAINT fk_comment_admin FOREIGN KEY (admin_id) REFERENCES ADMIN(admin_id) ON DELETE SET NULL,
+  CONSTRAINT fk_comment_parent FOREIGN KEY (parent_id) REFERENCES COMMENTS(comment_id) ON DELETE SET NULL,
+  CONSTRAINT check_comment_author CHECK (
+    (user_id IS NOT NULL AND admin_id IS NULL) OR 
+    (user_id IS NULL AND admin_id IS NOT NULL)
+  )  -- 작성자는 사용자 또는 관리자 중 하나만 가능
+);
+
+-- 댓글 ID 시퀀스 생성
+CREATE SEQUENCE comments_seq START WITH 1 INCREMENT BY 1;
+
+-- 댓글 ID 자동 증가 트리거
+CREATE OR REPLACE TRIGGER comments_bir 
+BEFORE INSERT ON COMMENTS 
+FOR EACH ROW
+BEGIN
+  SELECT comments_seq.NEXTVAL 
+  INTO :NEW.comment_id 
+  FROM dual;
+END;
+/
+
+
+17. 인덱스 생성 (모든 테이블 생성 후)
+-- 인덱스 생성
+-- 인덱스는 데이터베이스 검색 속도를 향상시키는 데이터 구조입니다.
+-- 자주 검색하는 필드에 인덱스를 생성하면 쿼리 성능이 향상됩니다.
+
+CREATE INDEX idx_room_type ON ROOMS(room_type_id);
+CREATE INDEX idx_room_view_type ON ROOMS(view_type);
+CREATE INDEX idx_reservation_user ON RESERVATIONS(user_id);
+CREATE INDEX idx_reservation_room ON RESERVATIONS(room_id);
+CREATE INDEX idx_reservation_dates ON RESERVATIONS(check_in_date, check_out_date);
+CREATE INDEX idx_review_room_type ON REVIEWS(room_type_id);
+CREATE INDEX idx_review_user ON REVIEWS(user_id);
+CREATE INDEX idx_favorite_user ON FAVORITES(user_id);
+CREATE INDEX idx_favorite_room_type ON FAVORITES(room_type_id);
+CREATE INDEX idx_restaurant_cuisine ON RESTAURANTS(cuisine_type);
+CREATE INDEX idx_menu_restaurant ON MENUS(restaurant_id);
+CREATE INDEX idx_menu_category ON MENUS(category);
+CREATE INDEX idx_dining_reservation_user ON DINING_RESERVATIONS(user_id);
+CREATE INDEX idx_dining_reservation_restaurant ON DINING_RESERVATIONS(restaurant_id);
+CREATE INDEX idx_dining_reservation_date ON DINING_RESERVATIONS(reservation_date);
+CREATE INDEX idx_dining_review_restaurant ON DINING_REVIEWS(restaurant_id);
+CREATE INDEX idx_dining_review_user ON DINING_REVIEWS(user_id);
+CREATE INDEX idx_board_post_type ON BOARD_POSTS(type);
+CREATE INDEX idx_board_post_category ON BOARD_POSTS(category);
+CREATE INDEX idx_board_post_dates ON BOARD_POSTS(start_date, end_date);
+CREATE INDEX idx_inquiry_status ON INQUIRIES(status);
+CREATE INDEX idx_inquiry_user ON INQUIRIES(user_id);
+CREATE INDEX idx_inquiry_category ON INQUIRIES(category);
+CREATE INDEX idx_payment_user ON PAYMENT_METHODS(user_id);
+
+
+CREATE INDEX idx_comment_target ON COMMENTS(target_type, target_id);
+CREATE INDEX idx_comment_parent ON COMMENTS(parent_id);
+CREATE INDEX idx_comment_user ON COMMENTS(user_id);
+CREATE INDEX idx_comment_admin ON COMMENTS(admin_id);
+commit;
+
